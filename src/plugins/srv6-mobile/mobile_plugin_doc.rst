@@ -203,6 +203,26 @@ QFI are extracted from the active SID in the receiving packets.
 
    sr localsid prefix 2001:db8::/64 behavior end.m.gtp6.e
 
+End.M.GTP6.E.Red is an optimization of End.M.GTP6.E and this segment is
+associated with the following mandatory parameters:
+
+-  SID-PREFIX: SRv6 SID prefix to represent the function.
+-  FIB: fib-table number for lookup IPv6 GTP-U packets.
+-  IP-PREFIX: IPv6 prefix associated with SID-PREFIX
+
+The following command instantiates a new End.M.GTP6.E function.
+
+::
+   sr localsid prefix SID-PREFIX behavior end.m.gtp6.e.red fib-table FIB ran-ip-prefix IP-PREFIX
+
+For example, the below command configures the SID prefix
+2001:db8:6e11:0001::/64 with ``end.m.gtp6.e.red`` behavior. The destination
+IPv6 address is extracted from the active SID and ran-ip-prefix. Note that
+this behavior always expects only GTP-U G-PDU packets.
+
+::
+   sr localsid prefix 2001:db8:6e11:0001::/64 behavior end.m.gtp6.e.red fib-table 1 ran-ip-prefix 2001:db8:0:abcd:ef01:2300::/88
+
 FIB Table Lookup for Inner IPv4/IPv6 packet
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

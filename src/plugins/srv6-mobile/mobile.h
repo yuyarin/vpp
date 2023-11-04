@@ -211,6 +211,16 @@ typedef struct srv6_end_gtp6_e_param_s
   u32 fib6_index;
 } srv6_end_gtp6_e_param_t;
 
+/* GTP6.E.Red */
+typedef struct srv6_end_gtp6_e_red_param_s
+{
+  u32 fib_table;
+  u32 fib4_index;
+  u32 fib6_index;
+  ip6_address_t ran_ip_prefix_addr;
+  u16 ran_ip_prefix_len;
+} srv6_end_gtp6_e_red_param_t;
+
 /* GTP4.DT */
 typedef struct srv6_t_gtp4_dt_param_s
 {
@@ -293,6 +303,7 @@ typedef struct srv6_end_main_v6_s
 
 extern srv6_end_main_v6_t srv6_end_main_v6;
 extern vlib_node_registration_t srv6_end_m_gtp6_e;
+extern vlib_node_registration_t srv6_end_m_gtp6_e_red;
 
 typedef struct srv6_end_main_v6_decap_s
 {

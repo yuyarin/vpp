@@ -7,6 +7,7 @@ features:
   - GTP6.D
   - GTP6.D.Di
   - GTP6.E
+  - GTP6.E.Red
 description: "SRv6 Mobile End Functions. GTP4.D, GTP4.E,
               GTP6.D, GTP6.D.Di and GTP6.E are supported."
 state: production

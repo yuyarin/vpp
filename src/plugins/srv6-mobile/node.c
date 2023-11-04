@@ -121,6 +121,10 @@ format_srv6_end_rewrite_trace6 (u8 * s, va_list * args)
   _(M_GTP6_E_PACKETS, "srv6 End.M.GTP6.E packets") \
   _(M_GTP6_E_BAD_PACKETS, "srv6 End.M.GTP6.E bad packets")
 
+#define foreach_srv6_end_v6_e_red_error                                       \
+  _ (M_GTP6_E_RED_PACKETS, "srv6 End.M.GTP6.E.Red packets")                   \
+  _ (M_GTP6_E_RED_BAD_PACKETS, "srv6 End.M.GTP6.E.Red bad packets")
+
 #define foreach_srv6_end_v6_d_error \
   _(M_GTP6_D_PACKETS, "srv6 End.M.GTP6.D packets") \
   _(M_GTP6_D_BAD_PACKETS, "srv6 End.M.GTP6.D bad packets")
@@ -160,6 +164,14 @@ typedef enum
 #undef _
     SRV6_END_N_V6_E_ERROR,
 } srv6_end_error_v6_e_t;
+
+typedef enum
+{
+#define _(sym, str) SRV6_END_ERROR_##sym,
+  foreach_srv6_end_v6_e_red_error
+#undef _
+    SRV6_END_N_V6_E_RED_ERROR,
+} srv6_end_error_v6_e_red_t;
 
 typedef enum
 {
@@ -211,6 +223,12 @@ static char *srv6_end_error_v6_e_strings[] = {
 #undef _
 };
 
+static char *srv6_end_error_v6_e_red_strings[] = {
+#define _(sym, string) string,
+  foreach_srv6_end_v6_e_red_error
+#undef _
+};
+
 static char *srv6_end_error_v6_d_strings[] = {
 #define _(sym,string) string,
   foreach_srv6_end_v6_d_error
@@ -256,6 +274,13 @@ typedef enum
   SRV6_END_M_GTP6_E_NEXT_LOOKUP,
   SRV6_END_M_GTP6_E_N_NEXT,
 } srv6_end_m_gtp6_e_next_t;
+
+typedef enum
+{
+  SRV6_END_M_GTP6_E_RED_NEXT_DROP,
+  SRV6_END_M_GTP6_E_RED_NEXT_LOOKUP,
+  SRV6_END_M_GTP6_E_RED_N_NEXT,
+} srv6_end_m_gtp6_e_red_next_t;
 
 typedef enum
 {
@@ -1646,6 +1671,222 @@ VLIB_NODE_FN (srv6_end_m_gtp6_e)
 
   vlib_node_increment_counter (vm, sm->end_m_gtp6_e_node_index,
 			       SRV6_END_ERROR_M_GTP6_E_PACKETS, good_n);
+
+  return frame->n_vectors;
+}
+
+// Function for SRv6 GTP6.E.Red function
+
+VLIB_NODE_FN (srv6_end_m_gtp6_e_red)
+(vlib_main_t *vm, vlib_node_runtime_t *node, vlib_frame_t *frame)
+{
+  srv6_end_main_v6_t *sm = &srv6_end_main_v6;
+  ip6_sr_main_t *sm2 = &sr_main;
+  u32 n_left_from, next_index, *from, *to_next;
+  u32 thread_index = vm->thread_index;
+
+  u32 good_n = 0, bad_n = 0;
+
+  from = vlib_frame_vector_args (frame);
+  n_left_from = frame->n_vectors;
+  next_index = node->cached_next_index;
+
+  while (n_left_from > 0)
+    {
+      u32 n_left_to_next;
+
+      vlib_get_next_frame (vm, node, next_index, to_next, n_left_to_next);
+
+      while (n_left_from > 0 && n_left_to_next > 0)
+	{
+	  u32 bi0;
+	  vlib_buffer_t *b0;
+	  ip6_sr_localsid_t *ls0;
+	  srv6_end_gtp6_e_red_param_t *ls_param;
+
+	  ip6srv_combo_header_t *ip6srv0;
+	  ip6_address_t dst0, src0;
+
+	  ip6_gtpu_header_t *hdr0 = NULL;
+	  uword len0;
+	  uword key;
+	  u16 port;
+	  void *p;
+	  uword plen;
+
+	  u32 next0 = SRV6_END_M_GTP6_E_RED_NEXT_LOOKUP;
+
+	  // defaults
+	  bi0 = from[0];
+	  to_next[0] = bi0;
+	  from += 1;
+	  to_next += 1;
+	  n_left_from -= 1;
+	  n_left_to_next -= 1;
+
+	  b0 = vlib_get_buffer (vm, bi0);
+	  ls0 = pool_elt_at_index (sm2->localsids,
+				   vnet_buffer (b0)->ip.adj_index[VLIB_TX]);
+
+	  ls_param = (srv6_end_gtp6_e_red_param_t *) ls0->plugin_mem;
+
+	  ip6srv0 = vlib_buffer_get_current (b0);
+	  dst0 = ip6srv0->ip.dst_address;
+	  src0 = ip6srv0->ip.src_address;
+
+	  len0 = vlib_buffer_length_in_chain (vm, b0);
+
+	  // we need to be sure there is enough space before
+	  // ip6srv0 header, there is some extra space
+	  // in the pre_data area for this kind of
+	  // logic
+
+	  u32 teid = 0;
+	  u8 *teid8p = (u8 *) &teid;
+	  u8 qfi = 0;
+	  u16 index;
+	  u16 offset, shift;
+	  u32 hdrlen = 0;
+
+	  index = ls0->localsid_prefix_len;
+	  offset = index / 8;
+	  shift = index % 8;
+
+	  if (PREDICT_TRUE (shift == 0))
+	    {
+	      qfi = dst0.as_u8[offset];
+	      clib_memcpy_fast (teid8p, &dst0.as_u8[offset + 1], 4);
+	    }
+	  else
+	    {
+	      qfi |= dst0.as_u8[offset] << shift;
+	      qfi |= dst0.as_u8[offset + 1] >> (8 - shift);
+	      for (index = 0; index < 4; index++)
+		{
+		  *teid8p = dst0.as_u8[offset + index + 1] << shift;
+		  *teid8p |= dst0.as_u8[offset + index + 2] >> (8 - shift);
+		  teid8p++;
+		}
+	    }
+
+	  hdrlen = sizeof (gtpu_exthdr_t) + sizeof (gtpu_pdu_session_t);
+
+	  vlib_buffer_advance (b0, (word) sizeof (ip6srv_combo_header_t) +
+				     ip6srv0->sr.length * 8);
+
+	  // get length of encapsulated IPv6 packet (the remaining part)
+	  p = vlib_buffer_get_current (b0);
+
+	  plen = len0 = vlib_buffer_length_in_chain (vm, b0);
+
+	  len0 += hdrlen;
+
+	  hdrlen += sizeof (ip6_gtpu_header_t);
+
+	  vlib_buffer_advance (b0, -(word) hdrlen);
+
+	  hdr0 = vlib_buffer_get_current (b0);
+
+	  clib_memcpy_fast (hdr0, &sm->cache_hdr, sizeof (ip6_gtpu_header_t));
+
+	  hdr0->gtpu.teid = teid;
+	  hdr0->gtpu.length = clib_host_to_net_u16 (len0);
+
+	  hdr0->gtpu.type = GTPU_TYPE_GTPU;
+
+	  hdr0->gtpu.ext->seq = 0;
+	  hdr0->gtpu.ext->npdu_num = 0;
+
+	  u8 type = 0;
+	  gtpu_pdu_session_t *sess;
+
+	  hdr0->gtpu.ver_flags |= GTPU_EXTHDR_FLAG;
+
+	  hdr0->gtpu.ext->nextexthdr = GTPU_EXTHDR_PDU_SESSION;
+
+	  type = qfi & SRV6_PDU_SESSION_U_BIT_MASK;
+
+	  qfi = ((qfi & SRV6_PDU_SESSION_QFI_MASK) >> 2) |
+		((qfi & SRV6_PDU_SESSION_R_BIT_MASK) << 5);
+
+	  sess = (gtpu_pdu_session_t *) (((char *) hdr0) +
+					 sizeof (ip6_gtpu_header_t) +
+					 sizeof (gtpu_exthdr_t));
+	  sess->exthdrlen = 1;
+	  sess->type = type;
+	  sess->spare = 0;
+	  sess->u.val = qfi;
+	  sess->nextexthdr = 0;
+
+	  hdr0->udp.length = clib_host_to_net_u16 (
+	    len0 + sizeof (udp_header_t) + sizeof (gtpu_header_t));
+
+	  clib_memcpy_fast (hdr0->ip6.src_address.as_u8, src0.as_u8,
+			    sizeof (ip6_address_t));
+
+	  clib_memcpy_fast (hdr0->ip6.dst_address.as_u8,
+			    &ls_param->ran_ip_prefix_addr,
+			    sizeof (ip6_address_t));
+
+	  u64 mask = 1;
+	  u16 ran_ip_prefix_len = ls_param->ran_ip_prefix_len;
+	  if (PREDICT_TRUE (ran_ip_prefix_len > 64))
+	    {
+	      mask = (mask << (128 - ran_ip_prefix_len)) - 1;
+	      hdr0->ip6.dst_address.as_u64[1] |=
+		(dst0.as_u64[1] & clib_host_to_net_u64 (mask));
+	    }
+	  else
+	    {
+	      mask = (mask << (64 - ran_ip_prefix_len)) - 1;
+	      hdr0->ip6.dst_address.as_u64[0] |=
+		(dst0.as_u64[0] & clib_host_to_net_u64 (mask));
+	      hdr0->ip6.dst_address.as_u64[1] = dst0.as_u64[1];
+	    }
+
+	  hdr0->ip6.payload_length = clib_host_to_net_u16 (
+	    len0 + sizeof (udp_header_t) + sizeof (gtpu_header_t));
+
+	  // UDP source port.
+	  key = hash_memory (p, plen < 40 ? plen : 40, 0);
+	  port = hash_uword_to_u16 (&key);
+	  hdr0->udp.src_port = port;
+
+	  vnet_buffer (b0)->sw_if_index[VLIB_TX] = ls_param->fib6_index;
+
+	  good_n++;
+
+	  if (PREDICT_FALSE (node->flags & VLIB_NODE_FLAG_TRACE) &&
+	      PREDICT_FALSE (b0->flags & VLIB_BUFFER_IS_TRACED))
+	    {
+	      srv6_end_rewrite_trace_t *tr =
+		vlib_add_trace (vm, node, b0, sizeof (*tr));
+	      clib_memcpy (tr->src.as_u8, hdr0->ip6.src_address.as_u8,
+			   sizeof (ip6_address_t));
+	      clib_memcpy (tr->dst.as_u8, hdr0->ip6.dst_address.as_u8,
+			   sizeof (ip6_address_t));
+	      tr->teid = hdr0->gtpu.teid;
+	    }
+
+	  vlib_increment_combined_counter (
+	    ((next0 == SRV6_END_M_GTP6_E_RED_NEXT_DROP) ?
+		     &(sm2->sr_ls_invalid_counters) :
+		     &(sm2->sr_ls_valid_counters)),
+	    thread_index, ls0 - sm2->localsids, 1,
+	    vlib_buffer_length_in_chain (vm, b0));
+
+	  vlib_validate_buffer_enqueue_x1 (vm, node, next_index, to_next,
+					   n_left_to_next, bi0, next0);
+	}
+
+      vlib_put_next_frame (vm, node, next_index, n_left_to_next);
+    }
+
+  vlib_node_increment_counter (vm, sm->end_m_gtp6_e_node_index,
+			       SRV6_END_ERROR_M_GTP6_E_RED_BAD_PACKETS, bad_n);
+
+  vlib_node_increment_counter (vm, sm->end_m_gtp6_e_node_index,
+			       SRV6_END_ERROR_M_GTP6_E_RED_PACKETS, good_n);
 
   return frame->n_vectors;
 }
@@ -3129,6 +3370,18 @@ VLIB_REGISTER_NODE (srv6_end_m_gtp6_e) =
   {
   [SRV6_END_M_GTP6_E_NEXT_DROP] = "error-drop",
   [SRV6_END_M_GTP6_E_NEXT_LOOKUP] = "ip6-lookup",}
+,};
+
+VLIB_REGISTER_NODE (srv6_end_m_gtp6_e_red) =
+{
+  .name = "srv6-end-m-gtp6-e-red",.vector_size = sizeof (u32),.format_trace =
+    format_srv6_end_rewrite_trace6,.type = VLIB_NODE_TYPE_INTERNAL,.n_errors =
+    ARRAY_LEN (srv6_end_error_v6_e_red_strings),.error_strings =
+    srv6_end_error_v6_e_red_strings,.n_next_nodes =
+    SRV6_END_M_GTP6_E_RED_N_NEXT,.next_nodes =
+  {
+  [SRV6_END_M_GTP6_E_RED_NEXT_DROP] = "error-drop",
+  [SRV6_END_M_GTP6_E_RED_NEXT_LOOKUP] = "ip6-lookup",}
 ,};
 
 VLIB_REGISTER_NODE (srv6_end_m_gtp6_d) =
